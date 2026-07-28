@@ -16,13 +16,14 @@ const app = express();
 const consoleSessionCookie = "fh_qr_console";
 const consoleSessionHours = 12;
 const maxTablesPerPublish = 300;
+const configuredCorsOrigins = parseCorsOrigins(process.env.QR_ORDER_CORS_ORIGIN);
 
+logStartupConfig();
 app.set("trust proxy", true);
+app.use(requestLogger);
 app.use(
   cors({
-    origin: process.env.QR_ORDER_CORS_ORIGIN
-      ? process.env.QR_ORDER_CORS_ORIGIN.split(",").map((item) => item.trim())
-      : true,
+    origin: resolveCorsOrigin,
     credentials: true,
   }),
 );
@@ -996,6 +997,101 @@ function payloadShape(value) {
   return typeof payload;
 }
 
+function logStartupConfig() {
+  console.info(
+    "[QR Order API] config",
+    JSON.stringify({
+      nodeEnv: readText(process.env.NODE_ENV, "production"),
+      hasFizaApiBaseUrl: Boolean(readText(process.env.FIZA_API_BASE_URL || process.env.SMTRADE_API_BASE_URL)),
+      hasFizaApiKey: Boolean(readText(process.env.FIZA_API_KEY || process.env.SMTRADE_API_KEY)),
+      hasFirebaseServiceAccount: Boolean(
+        readText(process.env.QR_ORDER_FIREBASE_SERVICE_ACCOUNT_JSON) ||
+          readText(process.env.QR_ORDER_FIREBASE_SERVICE_ACCOUNT_BASE64) ||
+          readText(process.env.QR_ORDER_FIREBASE_SERVICE_ACCOUNT_PATH) ||
+          readText(process.env.GOOGLE_APPLICATION_CREDENTIALS),
+      ),
+      webBaseUrl: readText(process.env.QR_ORDER_WEB_BASE_URL, "https://order.fizahub.vn"),
+      corsOrigins: configuredCorsOrigins.length > 0 ? configuredCorsOrigins : ["*"],
+      cookieSameSite: readText(process.env.QR_ORDER_COOKIE_SAMESITE) || "auto",
+    }),
+  );
+}
+
+function requestLogger(req, res, next) {
+  if (req.path === "/healthz" && !readText(req.get("origin"))) {
+    next();
+    return;
+  }
+
+  const startedAt = Date.now();
+  const requestId = readText(req.get("x-request-id")) || crypto.randomUUID();
+  res.setHeader("x-qr-request-id", requestId);
+
+  console.info(
+    "[QR Order API] request",
+    JSON.stringify({
+      requestId,
+      method: req.method,
+      path: req.originalUrl,
+      origin: readText(req.get("origin")),
+      contentType: readText(req.get("content-type")),
+    }),
+  );
+
+  res.on("finish", () => {
+    console.info(
+      "[QR Order API] response",
+      JSON.stringify({
+        requestId,
+        method: req.method,
+        path: req.originalUrl,
+        status: res.statusCode,
+        durationMs: Date.now() - startedAt,
+      }),
+    );
+  });
+
+  next();
+}
+
+function resolveCorsOrigin(origin, callback) {
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) {
+    callback(null, true);
+    return;
+  }
+  if (isCorsAllowedOrigin(normalized)) {
+    callback(null, true);
+    return;
+  }
+
+  console.warn(
+    "[QR Order API] cors_denied",
+    JSON.stringify({
+      origin: normalized,
+      allowedOrigins: configuredCorsOrigins,
+    }),
+  );
+  callback(null, false);
+}
+
+function isCorsAllowedOrigin(origin) {
+  if (configuredCorsOrigins.length === 0) return true;
+  if (configuredCorsOrigins.includes("*")) return true;
+  return configuredCorsOrigins.includes(normalizeOrigin(origin));
+}
+
+function parseCorsOrigins(value) {
+  return readText(value)
+    .split(",")
+    .map(normalizeOrigin)
+    .filter(Boolean);
+}
+
+function normalizeOrigin(value) {
+  return readText(value).replace(/\/+$/, "");
+}
+
 function asyncHandler(handler) {
   return async (req, res) => {
     try {
@@ -1003,6 +1099,16 @@ function asyncHandler(handler) {
     } catch (error) {
       const status = error.statusCode || error.status || 500;
       if (status === 401) clearSessionCookie(res, req);
+      console.error(
+        "[QR Order API] error",
+        JSON.stringify({
+          method: req.method,
+          path: req.originalUrl,
+          status,
+          origin: readText(req.get("origin")),
+          message: error.message || "Yeu cau QR Order that bai.",
+        }),
+      );
       res.status(status).json({
         ok: false,
         message: error.message || "Yeu cau QR Order that bai.",
