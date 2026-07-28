@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: fizahub-qr-order-api
+    runtime: node
+    region: singapore
+    plan: free
+    rootDir: api_functions
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: FIZA_API_BASE_URL
+        value: https://fizahub.vn/api-v2
+      - key: FIZA_API_KEY
+        sync: false
+      - key: QR_ORDER_FIREBASE_SERVICE_ACCOUNT_BASE64
+        sync: false
+      - key: QR_ORDER_WEB_BASE_URL
+        value: https://order.fizahub.vn
+      - key: QR_ORDER_CORS_ORIGIN
+        value: https://order.fizahub.vn
+      - key: QR_ORDER_COOKIE_SAMESITE
+        value: None
+      - key: QR_ORDER_DEBUG_API
+        value: "0"
